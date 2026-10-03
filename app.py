@@ -93,7 +93,7 @@ st.sidebar.caption("AI-Driven Signals. Autonomous Management.")
 asset = st.sidebar.selectbox("ASSET", ["BTC", "ETH", "SOL", "XRP"])
 exchange = st.sidebar.selectbox("EXCHANGE", ["Blofin", "BloFin"])
 margin_mode = st.sidebar.selectbox("MARGIN MODE", ["Isolated", "Cross"])
-selected_tf_mode = st.sidebar.selectbox("TIMEFRAME", ["6m", "12m", "15m", "24m", "30m", "1h", "4h", "6h", "12", "1d"])
+selected_tf_mode = st.sidebar.selectbox("TIMEFRAME", ["6m", "12m", "15m", "24m", "30m", "1h", "4h", "6h", "12h", "1d"])
 
 min_probability = st.sidebar.slider("MIN PROBABILITY", min_value=50, max_value=85, value=70, step=5)
 
