@@ -91,7 +91,7 @@ st.sidebar.title("⚡ MyCipher")
 st.sidebar.caption("AI-Driven Signals. Autonomous Management.")
 
 asset = st.sidebar.selectbox("ASSET", ["BTC", "ETH", "SOL", "XRP"])
-exchange = st.sidebar.selectbox("EXCHANGE", ["", "BloFin"])
+exchange = st.sidebar.selectbox("EXCHANGE", ["Blofin", "BloFin"])
 margin_mode = st.sidebar.selectbox("MARGIN MODE", ["Isolated", "Cross"])
 selected_tf_mode = st.sidebar.selectbox("TIMEFRAME", ["15m", "1h", "4h", "1d"])
 
