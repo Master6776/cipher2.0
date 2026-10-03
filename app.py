@@ -286,5 +286,5 @@ with placeholder.container():
             st.progress(min(100, max(0, confidence)) / 100)
 
 if auto_refresh:
-    time.sleep(15)
+    time.sleep(60)
     st.rerun()
