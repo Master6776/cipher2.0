@@ -100,7 +100,7 @@ min_probability = st.sidebar.slider("MIN PROBABILITY", min_value=50, max_value=8
 st.sidebar.markdown("---")
 
 st.sidebar.markdown("<p style='font-size: 11px; color: #8b949e; margin-bottom: 4px; letter-spacing: 0.5px;'>SYSTEM SETTINGS</p>", unsafe_allow_html=True)
-auto_refresh = st.sidebar.toggle("🔄 Auto-Live-Loop (15s)", value=True)
+auto_refresh = st.sidebar.toggle("🔄 Auto-Live-Loop (60s)", value=True)
 enable_telegram = st.sidebar.toggle("📱 Telegram Push", value=True)
 
 st.sidebar.markdown("---")
