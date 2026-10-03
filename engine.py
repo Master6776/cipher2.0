@@ -101,6 +101,6 @@ def calculate_liquidity_and_sweep_logic(df, live_price=None):
         tp2 = current_price + (atr * 3.0) if is_up else current_price - (atr * 3.0)
         
         # Variiert je nach Stärke der Kerzenschwankung zwischen 52% und 78%
-        confidence = int(min(78, max(52, 50 + abs(price_diff / atr) * 8)))
+        confidence = int(min(78, max(30, 50 + abs(price_diff / atr) * 8)))
 
     return float(current_price), float(stop_loss), float(tp1), float(tp2), int(confidence), signal_type, rolling_high, rolling_low
