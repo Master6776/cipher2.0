@@ -97,36 +97,47 @@ def calculate_liquidity_and_sweep_logic(df, live_price=None):
     long_ema = (ema20.iloc[-2] <= ema50.iloc[-2]) and (ema20.iloc[-1] > ema50.iloc[-1])
     short_ema = (ema50.iloc[-2] <= ema20.iloc[-2]) and (ema50.iloc[-1] > ema20.iloc[-1])
     
-    signal_type = "Neutral"
-    confidence = 50
-    
     vol_sma = df["volume"].rolling(window=20).mean().iloc[-1]
     current_vol = df["volume"].iloc[-1]
-    vol_spike = current_vol > (2.0 * vol_sma)
+    vol_ratio = current_vol / vol_sma if vol_sma > 0 else 1.0
+    vol_spike = vol_ratio > 2.0
+    
+    # Dynamische Scoring-Komponenten
+    base_conf = 50.0
+    ema_diff_pct = abs(ema20.iloc[-1] - ema50.iloc[-1]) / current_price * 100
+    trend_score = min(15.0, ema_diff_pct * 15)
+    vol_score = min(15.0, (vol_ratio - 1.0) * 6)
+    osc_score = min(15.0, abs(curr_wt1) / 4.0)
+
+    signal_type = "Neutral"
     
     if wt_cross_down and vol_spike:
         signal_type = "Cipher B Short Overbought"
-        confidence = 85
+        confidence = 82 + int(min(13, vol_score))
     elif wt_cross_up and vol_spike:
         signal_type = "Cipher B Long Oversold"
-        confidence = 85
+        confidence = 82 + int(min(13, vol_score))
     elif short_ema:
         signal_type = "EMA Trend Short"
-        confidence = 72
+        confidence = 70 + int(trend_score)
     elif long_ema:
         signal_type = "EMA Trend Long"
-        confidence = 76
+        confidence = 70 + int(trend_score)
     else:
         if (df["high"].iloc[-1] > rolling_high) and (current_price < rolling_high) and vol_spike:
             signal_type = "Short (Liquidity Sweep)"
-            confidence = 75
+            confidence = 72 + int(vol_score)
         elif (df["low"].iloc[-1] < rolling_low) and (current_price > rolling_low) and vol_spike:
             signal_type = "Long (Liquidity Sweep)"
-            confidence = 75
+            confidence = 72 + int(vol_score)
         else:
             is_up = (current_price - df["close"].iloc[-6]) >= 0
             signal_type = "Long Setup" if is_up else "Short Setup"
-            confidence = 55
+            # Dynamische Berechnung basierend auf echtem Momentum & Oszillator-Werten
+            momentum_factor = ((current_price - df["close"].iloc[-6]) / df["close"].iloc[-6]) * 100
+            confidence = int(base_conf + abs(momentum_factor) * 30 + osc_score + vol_score)
+
+    confidence = int(max(42, min(96, confidence)))
 
     # 4. SL & Dynamische TP Berechnung
     is_short_signal = "Short" in signal_type
