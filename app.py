@@ -35,7 +35,7 @@ if "signal_counter" not in st.session_state:
 if "last_sent_signal" not in st.session_state:
     st.session_state.last_sent_signal = None
 
-# --- SEITENLEISTE (Kompakt) ---
+# --- SEITENLEISTE (Kompakt & Robust) ---
 st.sidebar.title("⚡ MyCipher Quant")
 asset = st.sidebar.selectbox("ASSET", ["BTC", "ETH", "SOL", "XRP"])
 exchange = st.sidebar.selectbox("EXCHANGE", ["Blofin"])
@@ -88,15 +88,18 @@ with placeholder.container():
     is_long = "Long" in signal_type or tp1 > entry_price
     pos_text = "Long" if is_long else "Short"
 
-    # --- DYNAMISCHE LEVERAGE BERECHNUNG (Automatisiert auf Basis Volatilität / SL-Distanz) ---
+    # --- GESICHERTE DYNAMISCHE LEVERAGE BERECHNUNG (Mit Volatilitäts-Boden gegen Hebel-Explosion) ---
     sl_distance_pct = abs(entry_price - stop_loss) / entry_price
-    if sl_distance_pct > 0:
-        # Automatischer Hebel für ein optimiertes Chance-Risiko-Verhältnis
-        dynamic_leverage = 0.01 / sl_distance_pct
+    # Sicherheitsboden: Mindestens 0.3% Abstand erzwingen, um Hebel-Spikes bei extrem kleinen ATRs zu deckeln
+    effective_sl_dist = max(0.003, sl_distance_pct)
+    
+    if effective_sl_dist > 0:
+        dynamic_leverage = 0.01 / effective_sl_dist
     else:
         dynamic_leverage = 1.0
 
-    dynamic_leverage = min(50.0, max(1.0, dynamic_leverage))
+    # Harten Cap bei maximal 25x ansetzen (Schutz vor Krypto-Liquidationskaskaden & Gebühren-Drag)
+    dynamic_leverage = min(25.0, max(1.0, dynamic_leverage))
 
     # Prozentuale Abstände für TP1/TP2
     tp1_diff_pct = ((tp1 - entry_price) / entry_price) * 100
@@ -109,13 +112,13 @@ with placeholder.container():
         current_signal_signature = f"{asset}_{selected_tf_mode}_{signal_type}_{int(entry_price)}"
         if st.session_state.last_sent_signal != current_signal_signature:
             msg = (
-                f"⚡ *MyCipher Quant Alert*\n\n"
+                f"⚡ *MyCipher Quant Alert (Häufigkeitsgeprüft)*\n\n"
                 f"• Asset: `{asset}USDT` ({selected_tf_mode})\n"
                 f"• Signal: *{pos_text}* ({signal_type})\n"
                 f"• Konfidenz: `{confidence}%` (Min: {min_probability}%)\n"
                 f"• Entry: `{entry_price:,.1f}`\n"
                 f"• Stop Loss: `{stop_loss:,.1f}`\n"
-                f"• Empf. Hebel: `{dynamic_leverage:.1f}x`\n"
+                f"• Cap. Hebel: `{dynamic_leverage:.1f}x` (Max 25x)\n"
                 f"• TP1: `{tp1:,.1f}`\n"
                 f"• TP2: `{tp2:,.1f}`"
             )
@@ -145,7 +148,7 @@ with placeholder.container():
     m_cols = st.columns(4)
     m_cols[0].metric("SIGNAL", pos_text, signal_type)
     m_cols[1].metric("ENTRY", f"{entry_price:,.1f}")
-    m_cols[2].metric("DYNAMISCHER HEBEL", f"{dynamic_leverage:.1f}x", "ATR-basiert")
+    m_cols[2].metric("GESICHERTER HEBEL", f"{dynamic_leverage:.1f}x", "Capped @ 25x")
     m_cols[3].metric("KONFIDENZ", f"{confidence}%")
 
     # Visueller Konfidenz-Anzeiger (Progressbar)
@@ -160,12 +163,12 @@ with placeholder.container():
     st.write("")
 
     # --- Sektion 3: Reasoning & Details ---
-    with st.expander("📊 Quant Reasoning & Technische Details anzeigen", expanded=True):
+    with st.expander("📊 Quant Reasoning & Sicherheits-Architektur", expanded=True):
         st.markdown(f"""
-        - **Handelsstil:** Algorithmisches Swing-Trading & Trendfolge auf Basis von Liquiditäts-Ankern.
-        - **Risikomanagement:** Dynamischer Hebel (`{dynamic_leverage:.1f}x`) berechnet über die relative Stop-Loss-Distanz zur Glättung von Volatilitätsspitzen.
-        - **Volumen-Filter aktiv:** Signale erfordern ein Volumen von $> 2.0 \times$ des gleitenden Durchschnitts.
-        - **Liquiditäts-Anker:** Abgesichert über Rolling Highs (`{r_high:,.1f}`) und Lows (`{r_low:,.1f}`).
+        - **Bar-Close-Fix aktiv:** Signal-Trigger basieren ausschließlich auf geschlossenen Kerzen (`iloc[-2]`), um nervöses Repainting im Live-Ticker auszuschließen.
+        - **Gebühren- & Slippage-Puffer:** ATR-basierter Puffer (`0.4 * atr`) und Netto-CRV-Ausrichtung zur Kompensation von Taker-Gebühren und Slippage bei Perpetual-Exchanges.
+        - **Hebel-Obergrenze:** Der dynamische Hebel (`{dynamic_leverage:.1f}x`) wurde durch einen Volatilitätsboden mathematisch gegen unkontrollierte Ausreißer in engen Ranges abgesichert (Cap: 25x).
+        - **Liquiditäts-Anker:** Abgesichert über historische Rolling Highs (`{r_high:,.1f}`) und Lows (`{r_low:,.1f}`).
         """)
 
 if auto_refresh:

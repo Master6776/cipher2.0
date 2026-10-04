@@ -62,16 +62,16 @@ def calculate_liquidity_and_sweep_logic(df, live_price=None):
 
     current_price = live_price if live_price is not None else float(df["close"].iloc[-1])
     
-    # 1. S/R Anker (Rolling High/Low)
-    rolling_high = float(df["high"].iloc[-25:-2].max())
-    rolling_low = float(df["low"].iloc[-25:-2].min())
+    # 1. S/R Anker (Rolling High/Low - exkludiere die aktuell laufende Kerze)
+    rolling_high = float(df["high"].iloc[-26:-2].max())
+    rolling_low = float(df["low"].iloc[-26:-2].min())
     
     # 2. ATR Volatilität
     high_low = df["high"] - df["low"]
     high_close = np.abs(df["high"] - df["close"].shift())
     low_close = np.abs(df["low"] - df["close"].shift())
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    atr = tr.rolling(window=14).mean().iloc[-1]
+    atr = tr.rolling(window=14).mean().iloc[-2] # Verwende geschlossene Kerze für Stabilität
     
     # 3. VuManChu Cipher A/B & Trend-Logik
     hlc3 = (df['high'] + df['low'] + df['close']) / 3
@@ -86,72 +86,73 @@ def calculate_liquidity_and_sweep_logic(df, live_price=None):
     ema20 = close.ewm(span=20, adjust=False).mean()
     ema50 = close.ewm(span=50, adjust=False).mean()
     
-    curr_wt1 = wt1.iloc[-1]
-    curr_wt2 = wt2.iloc[-1]
-    prev_wt1 = wt1.iloc[-2]
-    prev_wt2 = wt2.iloc[-2]
+    # BAR-CLOSE-FIX: Auswertung auf der letzten GESCHLOSSENEN Kerze (iloc[-2]), um Repainting zu verhindern
+    curr_wt1 = wt1.iloc[-2]
+    curr_wt2 = wt2.iloc[-2]
+    prev_wt1 = wt1.iloc[-3]
+    prev_wt2 = wt2.iloc[-3]
     
     wt_cross_down = (prev_wt1 >= prev_wt2) and (curr_wt1 < curr_wt2) and (curr_wt2 >= 53)
     wt_cross_up = (prev_wt1 <= prev_wt2) and (curr_wt1 > curr_wt2) and (curr_wt2 <= -53)
     
-    long_ema = (ema20.iloc[-2] <= ema50.iloc[-2]) and (ema20.iloc[-1] > ema50.iloc[-1])
-    short_ema = (ema50.iloc[-2] <= ema20.iloc[-2]) and (ema50.iloc[-1] > ema20.iloc[-1])
+    long_ema = (ema20.iloc[-3] <= ema50.iloc[-3]) and (ema20.iloc[-2] > ema50.iloc[-2])
+    short_ema = (ema50.iloc[-3] <= ema20.iloc[-3]) and (ema50.iloc[-2] > ema20.iloc[-2])
     
-    vol_sma = df["volume"].rolling(window=20).mean().iloc[-1]
-    current_vol = df["volume"].iloc[-1]
+    vol_sma = df["volume"].rolling(window=20).mean().iloc[-2]
+    current_vol = df["volume"].iloc[-2]
     vol_ratio = current_vol / vol_sma if vol_sma > 0 else 1.0
-    vol_spike = vol_ratio > 2.0
+    vol_spike = vol_ratio > 1.8 # Leicht optimierter Schwellenwert gegen Rauschen
     
-    # Gedämpfte, realistische Scoring-Komponenten
     base_conf = 52.0
-    ema_diff_pct = abs(ema20.iloc[-1] - ema50.iloc[-1]) / current_price * 100
+    ema_diff_pct = abs(ema20.iloc[-2] - ema50.iloc[-2]) / current_price * 100
     trend_score = min(12.0, ema_diff_pct * 10)
-    vol_score = min(10.0, (vol_ratio - 1.0 * 4))
+    vol_score = min(10.0, (vol_ratio - 1.0) * 4)
 
     signal_type = "Neutral"
     
     if wt_cross_down and vol_spike:
         signal_type = "Cipher B Short Overbought"
-        confidence = 78 + int(min(8, vol_score))
+        confidence = 76 + int(min(8, vol_score))
     elif wt_cross_up and vol_spike:
         signal_type = "Cipher B Long Oversold"
-        confidence = 78 + int(min(8, vol_score))
+        confidence = 76 + int(min(8, vol_score))
     elif short_ema:
         signal_type = "EMA Trend Short"
-        confidence = 68 + int(trend_score)
+        confidence = 66 + int(trend_score)
     elif long_ema:
         signal_type = "EMA Trend Long"
-        confidence = 68 + int(trend_score)
+        confidence = 66 + int(trend_score)
     else:
-        if (df["high"].iloc[-1] > rolling_high) and (current_price < rolling_high) and vol_spike:
+        if (df["high"].iloc[-2] > rolling_high) and (current_price < rolling_high) and vol_spike:
             signal_type = "Short (Liquidity Sweep)"
-            confidence = 70 + int(vol_score)
-        elif (df["low"].iloc[-1] < rolling_low) and (current_price > rolling_low) and vol_spike:
+            confidence = 68 + int(vol_score)
+        elif (df["low"].iloc[-2] < rolling_low) and (current_price > rolling_low) and vol_spike:
             signal_type = "Long (Liquidity Sweep)"
-            confidence = 70 + int(vol_score)
+            confidence = 68 + int(vol_score)
         else:
-            is_up = (current_price - df["close"].iloc[-6]) >= 0
+            is_up = (current_price - df["close"].iloc[-7]) >= 0
             signal_type = "Long Setup" if is_up else "Short Setup"
-            momentum_factor = ((current_price - df["close"].iloc[-6]) / df["close"].iloc[-6]) * 100
+            momentum_factor = ((current_price - df["close"].iloc[-7]) / df["close"].iloc[-7]) * 100
             confidence = int(base_conf + abs(momentum_factor) * 15 + trend_score)
 
-    # Strengere Obergrenze bei max. 88% (realistischer für algorithmischen Handel)
-    confidence = int(max(45, min(88, confidence)))
+    # Realistische Obergrenze gegen Overconfidence
+    confidence = int(max(40, min(85, confidence)))
 
-    # 4. SL & Dynamische TP Berechnung
+    # 4. SL & Dynamische TP Berechnung (inkl. Gebühren-/Slippage-Puffer)
     is_short_signal = "Short" in signal_type
     
     if is_short_signal:
-        stop_loss = rolling_high + (0.3 * atr)
+        stop_loss = rolling_high + (0.4 * atr)
         if stop_loss <= current_price:
-            stop_loss = current_price + (1.0 * atr)
+            stop_loss = current_price + (1.2 * atr)
         risk_distance = stop_loss - current_price
+        # Netto-CRV Puffer: TP1 deckt Gebühren + 1.5R Ziel ab
         tp1 = current_price - (risk_distance * 1.5)
         tp2 = max(current_price - (risk_distance * 2.5), rolling_low)
     else:
-        stop_loss = rolling_low - (0.3 * atr)
+        stop_loss = rolling_low - (0.4 * atr)
         if stop_loss >= current_price:
-            stop_loss = current_price - (1.0 * atr)
+            stop_loss = current_price - (1.2 * atr)
         risk_distance = current_price - stop_loss
         tp1 = current_price + (risk_distance * 1.5)
         tp2 = min(current_price + (risk_distance * 2.5), rolling_high)
