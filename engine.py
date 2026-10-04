@@ -102,42 +102,41 @@ def calculate_liquidity_and_sweep_logic(df, live_price=None):
     vol_ratio = current_vol / vol_sma if vol_sma > 0 else 1.0
     vol_spike = vol_ratio > 2.0
     
-    # Dynamische Scoring-Komponenten
-    base_conf = 50.0
+    # Gedämpfte, realistische Scoring-Komponenten
+    base_conf = 52.0
     ema_diff_pct = abs(ema20.iloc[-1] - ema50.iloc[-1]) / current_price * 100
-    trend_score = min(15.0, ema_diff_pct * 15)
-    vol_score = min(15.0, (vol_ratio - 1.0) * 6)
-    osc_score = min(15.0, abs(curr_wt1) / 4.0)
+    trend_score = min(12.0, ema_diff_pct * 10)
+    vol_score = min(10.0, (vol_ratio - 1.0 * 4))
 
     signal_type = "Neutral"
     
     if wt_cross_down and vol_spike:
         signal_type = "Cipher B Short Overbought"
-        confidence = 82 + int(min(13, vol_score))
+        confidence = 78 + int(min(8, vol_score))
     elif wt_cross_up and vol_spike:
         signal_type = "Cipher B Long Oversold"
-        confidence = 82 + int(min(13, vol_score))
+        confidence = 78 + int(min(8, vol_score))
     elif short_ema:
         signal_type = "EMA Trend Short"
-        confidence = 70 + int(trend_score)
+        confidence = 68 + int(trend_score)
     elif long_ema:
         signal_type = "EMA Trend Long"
-        confidence = 70 + int(trend_score)
+        confidence = 68 + int(trend_score)
     else:
         if (df["high"].iloc[-1] > rolling_high) and (current_price < rolling_high) and vol_spike:
             signal_type = "Short (Liquidity Sweep)"
-            confidence = 72 + int(vol_score)
+            confidence = 70 + int(vol_score)
         elif (df["low"].iloc[-1] < rolling_low) and (current_price > rolling_low) and vol_spike:
             signal_type = "Long (Liquidity Sweep)"
-            confidence = 72 + int(vol_score)
+            confidence = 70 + int(vol_score)
         else:
             is_up = (current_price - df["close"].iloc[-6]) >= 0
             signal_type = "Long Setup" if is_up else "Short Setup"
-            # Dynamische Berechnung basierend auf echtem Momentum & Oszillator-Werten
             momentum_factor = ((current_price - df["close"].iloc[-6]) / df["close"].iloc[-6]) * 100
-            confidence = int(base_conf + abs(momentum_factor) * 30 + osc_score + vol_score)
+            confidence = int(base_conf + abs(momentum_factor) * 15 + trend_score)
 
-    confidence = int(max(42, min(96, confidence)))
+    # Strengere Obergrenze bei max. 88% (realistischer für algorithmischen Handel)
+    confidence = int(max(45, min(88, confidence)))
 
     # 4. SL & Dynamische TP Berechnung
     is_short_signal = "Short" in signal_type

@@ -58,7 +58,7 @@ with placeholder.container():
     
     # Makro-Regime (Daily Trend)
     df_macro = get_blofin_candles(asset, "1d")
-    macro_trend, macro_color, macro_badge = "Neutral / Seitwärts", "#8b949e", "⚖️ RANGE"
+    macro_trend, macro_color, macro_badge = "Neutral / Seitwärts", "#8b949e", "⚖️️ RANGE"
     if df_macro is not None and len(df_macro) > 20:
         df_macro['SMA20'] = df_macro['close'].rolling(window=20).mean()
         if df_macro['close'].iloc[-1] > df_macro['SMA20'].iloc[-1]:
@@ -94,6 +94,25 @@ with placeholder.container():
     tp1_pct = f"+{tp1_diff_pct:.1f}%" if tp1_diff_pct >= 0 else f"{tp1_diff_pct:.1f}%"
     tp2_pct = f"+{tp2_diff_pct:.1f}%" if tp2_diff_pct >= 0 else f"{tp2_diff_pct:.1f}%"
 
+    # --- TELEGRAM PUSH LOGIK ---
+    if enable_telegram and confidence >= min_probability:
+        current_signal_signature = f"{asset}_{selected_tf_mode}_{signal_type}_{int(entry_price)}"
+        if st.session_state.last_sent_signal != current_signal_signature:
+            msg = (
+                f"⚡ *MyCipher Quant Alert*\n\n"
+                f"• Asset: `{asset}USDT` ({selected_tf_mode})\n"
+                f"• Signal: *{pos_text}* ({signal_type})\n"
+                f"• Konfidenz: `{confidence}%` (Min: {min_probability}%)\n"
+                f"• Entry: `{entry_price:,.1f}`\n"
+                f"• Stop Loss: `{stop_loss:,.1f}`\n"
+                f"• TP1: `{tp1:,.1f}`\n"
+                f"• TP2: `{tp2:,.1f}`"
+            )
+            success = send_telegram_alert(msg)
+            if success:
+                st.session_state.last_sent_signal = current_signal_signature
+                st.sidebar.success("📱 Telegram Push gesendet!")
+
     # --- Sektion 1: Makro & Top Alarm ---
     st.markdown(f"""
     <div class="macro-regime-box">
@@ -118,6 +137,10 @@ with placeholder.container():
     m_cols[2].metric("LEVERAGE", "15x")
     m_cols[3].metric("KONFIDENZ", f"{confidence}%")
 
+    # Visueller Konfidenz-Anzeiger (Progressbar)
+    st.markdown(f"<span style='font-size: 12px; color: #8b949e;'>Signal-Stärke / Konfidenz-Anzeiger (Ziel: $\ge {min_probability}\%$)</span>", unsafe_allow_html=True)
+    st.progress(max(0.0, min(1.0, confidence / 100.0)))
+
     r_cols = st.columns(3)
     r_cols[0].metric("STOP LOSS", f"{stop_loss:,.1f}")
     r_cols[1].metric("TP 1", f"{tp1:,.1f}", tp1_pct)
@@ -129,9 +152,9 @@ with placeholder.container():
     with st.expander("📊 Quant Reasoning & Technische Details anzeigen", expanded=True):
         st.markdown(f"""
         - **Handelsstil:** Algorithmisches Swing-Trading & Trendfolge auf Basis von Liquiditäts-Ankern.
-        - **Volumen-Filter aktiv:** Signale erfordern nun ein Volumen von $> 2.0 \times$ des gleitenden Durchschnitts, um Rauschen zu filtern.
-        - **Dynamisches CRV:** TP1 optimiert auf 1.5 R, TP2 flexibel an Struktur-Ankern ausgerichtet.
-        - **Liquiditäts-Anker:** Abgesichert über Rolling Highs (`{r_high:,.1f}`) und Lows (`{r_low:,.1f}`).
+        - **Volumen-Filter aktiv:** Signale erfordern nun ein Volumen von $> 2.0 \times$ des gleitenden Durchschnitts, um Rauschen zu filtern[cite: 9].
+        - **Dynamisches CRV:** TP1 optimiert auf 1.5 R, TP2 flexibel an Struktur-Ankern ausgerichtet[cite: 9].
+        - **Liquiditäts-Anker:** Abgesichert über Rolling Highs (`{r_high:,.1f}`) und Lows (`{r_low:,.1f}`)[cite: 9].
         """)
 
 if auto_refresh:
