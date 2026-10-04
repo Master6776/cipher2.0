@@ -68,10 +68,14 @@ if "signal_counter" not in st.session_state:
 if "last_sent_signal" not in st.session_state:
     st.session_state.last_sent_signal = None
 
-# --- HILFSFUNKTION FÜR KERZEN-COUNTDOWN ---
+# --- HILFSFUNKTION FÜR KERZEN-COUNTDOWN (INKL. 12m & 24m) ---
 def get_candle_countdown(tf_str):
     now = datetime.now()
-    minutes_map = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}
+    minutes_map = {
+        "1m": 1, "3m": 3, "6m": 6, "12m": 12, "15m": 15, 
+        "24m": 24, "30m": 30, "1h": 60, "4h": 240, 
+        "6h": 360, "12h": 720, "24h": 1440, "1d": 1440
+    }
     tf_mins = minutes_map.get(tf_str, 15)
     
     total_mins_day = now.hour * 60 + now.minute
@@ -93,12 +97,17 @@ st.sidebar.caption("AI-Driven Signals. Autonomous Management.")
 asset = st.sidebar.selectbox("ASSET", ["BTC", "ETH", "SOL", "XRP"])
 exchange = st.sidebar.selectbox("EXCHANGE", ["Blofin", "BloFin"])
 margin_mode = st.sidebar.selectbox("MARGIN MODE", ["Isolated", "Cross"])
+
+# Hier sind nun 12m und 24m fest im Dropdown verankert!
 selected_tf_mode = st.sidebar.selectbox("TIMEFRAME", ["6m", "12m", "15m", "24m", "30m", "1h", "4h", "6h", "12h", "1d"])
 
 min_probability = st.sidebar.slider("MIN PROBABILITY", min_value=50, max_value=85, value=70, step=5)
 
 st.sidebar.markdown("---")
+st.sidebar.markdown("<p style='font-size: 11px; color: #8b949e; margin-bottom: 4px; letter-spacing: 0.5px;'>MULTI-TIMEFRAME SCANNER</p>", unsafe_allow_html=True)
+multi_tf_enabled = st.sidebar.toggle("🌐 Alle TFs gleichzeitig scannen", value=False)
 
+st.sidebar.markdown("---")
 st.sidebar.markdown("<p style='font-size: 11px; color: #8b949e; margin-bottom: 4px; letter-spacing: 0.5px;'>SYSTEM SETTINGS</p>", unsafe_allow_html=True)
 auto_refresh = st.sidebar.toggle("🔄 Auto-Live-Loop (60s)", value=True)
 enable_telegram = st.sidebar.toggle("📱 Telegram Push", value=True)
@@ -127,9 +136,39 @@ placeholder = st.empty()
 
 with placeholder.container():
     live_price = get_blofin_ticker(asset)
-    df_candles = get_blofin_candles(asset, selected_tf_mode)
     
-    entry_price, stop_loss, tp1, tp2, confidence, signal_type, r_high, r_low = calculate_liquidity_and_sweep_logic(df_candles, live_price)
+    # --- MULTI-TIMEFRAME LOGIK ODER EINZEL-TF LOGIK ---
+    if multi_tf_enabled:
+        scan_timeframes = ["12m", "15m", "24m", "30m", "1h", "4h", "6h", "24h"]
+        mtf_results = []
+        
+        for tf in scan_timeframes:
+            df_c = get_blofin_candles(asset, tf)
+            ep, sl, t1, t2, conf, stype, rh, rl = calculate_liquidity_and_sweep_logic(df_c, live_price)
+            if ep is not None:
+                is_l = "Long" in stype or t1 > ep
+                pos = "Long" if is_l else "Short"
+                mtf_results.append({
+                    "Timeframe": tf,
+                    "Richtung": pos,
+                    "Konfidenz": f"{conf}%",
+                    "Signal-Typ": stype,
+                    "Entry": f"{ep:,.1f}"
+                })
+            else:
+                mtf_results.append({
+                    "Timeframe": tf,
+                    "Richtung": "Keine Daten",
+                    "Konfidenz": "0%",
+                    "Signal-Typ": "N/A",
+                    "Entry": "-"
+                })
+        
+        df_candles = get_blofin_candles(asset, selected_tf_mode)
+        entry_price, stop_loss, tp1, tp2, confidence, signal_type, r_high, r_low = calculate_liquidity_and_sweep_logic(df_candles, live_price)
+    else:
+        df_candles = get_blofin_candles(asset, selected_tf_mode)
+        entry_price, stop_loss, tp1, tp2, confidence, signal_type, r_high, r_low = calculate_liquidity_and_sweep_logic(df_candles, live_price)
 
     if entry_price is None:
         entry_price, stop_loss, tp1, tp2, confidence, signal_type = 90000.0, 91000.0, 88000.0, 85000.0, 50, "Keine Daten"
@@ -139,7 +178,7 @@ with placeholder.container():
     # --- FILTER-LOGIK: IST DIE KONFIDENZ ZU NIEDRIG? ---
     if confidence < min_probability:
         raw_position_text = "Warten..."
-        pos_color = "#8b949e" # Neutrales Grau
+        pos_color = "#8b949e"
         dot_icon = "⏳"
         bot_status_text = f"Bot stumm (wartet auf >= {min_probability}%)"
     else:
@@ -213,6 +252,13 @@ with placeholder.container():
 
     st.write("")
 
+    # --- MULTI-TIMEFRAME ÜBERSICHT (WENN AKTIVIERT) ---
+    if multi_tf_enabled:
+        st.markdown("### 🌐 Multi-Timeframe Konfluenz-Matrix")
+        df_mtf = pd.DataFrame(mtf_results)
+        st.dataframe(df_mtf, use_container_width=True, hide_index=True)
+        st.write("")
+
     # --- ZEILE 1 & 2 METRIKEN ---
     r1_cols = st.columns(4)
     r1_cols[0].metric("TIMEFRAME", selected_tf_mode)
@@ -252,8 +298,8 @@ with placeholder.container():
             </div>
             <h4 style="margin-top: 0; font-size: 15px; color: #f0f6fc; letter-spacing: -0.3px;">Reasoning:</h4>
             <ul style="color: #8b949e; font-size: 13px; margin-bottom: 0; line-height: 1.6;">
-                <li><b>Filter-Regel:</b> Telegram Push ist aktiv, hält aber Stillschweigen, bis die Wahrscheinlichkeit das Limit von <b>{min_probability}%</b> bricht.</li>
-                <li><b>Marktphase:</b> Der {selected_tf_mode}-Orderflow zeigt aktuell keine verwertbare Richtungsdominanz.</li>
+                <li><b>Multi-TF-Scan:</b> {"Aktiv (Scannt 12m, 15m, 24m, 30m, 1h, 4h, 6h, 24h parallel)" if multi_tf_enabled else "Inaktiv (Standard Einzel-TF Modus)"}.</li>
+                <li><b>Marktphase:</b> Der {selected_tf_mode}-Orderflow zeigt aktuell {"starke Dominanz" if is_active_signal else "keine verwertbare Richtungsdominanz"}.</li>
                 <li><b>Empfehlung:</b> Automatischen Loop laufen lassen – der Bot meldet sich, sobald ein starkes Setup triggert.</li>
             </ul>
         </div>
