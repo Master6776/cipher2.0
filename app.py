@@ -35,7 +35,7 @@ if "signal_counter" not in st.session_state:
 if "last_sent_signal" not in st.session_state:
     st.session_state.last_sent_signal = None
 
-# --- SEITENLEISTE ---
+# --- SEITENLEISTE (Kompakt) ---
 st.sidebar.title("⚡ MyCipher Quant")
 asset = st.sidebar.selectbox("ASSET", ["BTC", "ETH", "SOL", "XRP"])
 exchange = st.sidebar.selectbox("EXCHANGE", ["Blofin"])
@@ -58,7 +58,7 @@ with placeholder.container():
     
     # Makro-Regime (Daily Trend)
     df_macro = get_blofin_candles(asset, "1d")
-    macro_trend, macro_color, macro_badge = "Neutral / Seitwärts", "#8b949e", "⚖️️ RANGE"
+    macro_trend, macro_color, macro_badge = "Neutral / Seitwärts", "#8b949e", "⚖ RANGE"
     if df_macro is not None and len(df_macro) > 20:
         df_macro['SMA20'] = df_macro['close'].rolling(window=20).mean()
         if df_macro['close'].iloc[-1] > df_macro['SMA20'].iloc[-1]:
@@ -88,6 +88,16 @@ with placeholder.container():
     is_long = "Long" in signal_type or tp1 > entry_price
     pos_text = "Long" if is_long else "Short"
 
+    # --- DYNAMISCHE LEVERAGE BERECHNUNG (Automatisiert auf Basis Volatilität / SL-Distanz) ---
+    sl_distance_pct = abs(entry_price - stop_loss) / entry_price
+    if sl_distance_pct > 0:
+        # Automatischer Hebel für ein optimiertes Chance-Risiko-Verhältnis
+        dynamic_leverage = 0.01 / sl_distance_pct
+    else:
+        dynamic_leverage = 1.0
+
+    dynamic_leverage = min(50.0, max(1.0, dynamic_leverage))
+
     # Prozentuale Abstände für TP1/TP2
     tp1_diff_pct = ((tp1 - entry_price) / entry_price) * 100
     tp2_diff_pct = ((tp2 - entry_price) / entry_price) * 100
@@ -105,6 +115,7 @@ with placeholder.container():
                 f"• Konfidenz: `{confidence}%` (Min: {min_probability}%)\n"
                 f"• Entry: `{entry_price:,.1f}`\n"
                 f"• Stop Loss: `{stop_loss:,.1f}`\n"
+                f"• Empf. Hebel: `{dynamic_leverage:.1f}x`\n"
                 f"• TP1: `{tp1:,.1f}`\n"
                 f"• TP2: `{tp2:,.1f}`"
             )
@@ -134,7 +145,7 @@ with placeholder.container():
     m_cols = st.columns(4)
     m_cols[0].metric("SIGNAL", pos_text, signal_type)
     m_cols[1].metric("ENTRY", f"{entry_price:,.1f}")
-    m_cols[2].metric("LEVERAGE", "15x")
+    m_cols[2].metric("DYNAMISCHER HEBEL", f"{dynamic_leverage:.1f}x", "ATR-basiert")
     m_cols[3].metric("KONFIDENZ", f"{confidence}%")
 
     # Visueller Konfidenz-Anzeiger (Progressbar)
@@ -152,9 +163,9 @@ with placeholder.container():
     with st.expander("📊 Quant Reasoning & Technische Details anzeigen", expanded=True):
         st.markdown(f"""
         - **Handelsstil:** Algorithmisches Swing-Trading & Trendfolge auf Basis von Liquiditäts-Ankern.
-        - **Volumen-Filter aktiv:** Signale erfordern nun ein Volumen von $> 2.0 \times$ des gleitenden Durchschnitts, um Rauschen zu filtern[cite: 9].
-        - **Dynamisches CRV:** TP1 optimiert auf 1.5 R, TP2 flexibel an Struktur-Ankern ausgerichtet[cite: 9].
-        - **Liquiditäts-Anker:** Abgesichert über Rolling Highs (`{r_high:,.1f}`) und Lows (`{r_low:,.1f}`)[cite: 9].
+        - **Risikomanagement:** Dynamischer Hebel (`{dynamic_leverage:.1f}x`) berechnet über die relative Stop-Loss-Distanz zur Glättung von Volatilitätsspitzen.
+        - **Volumen-Filter aktiv:** Signale erfordern ein Volumen von $> 2.0 \times$ des gleitenden Durchschnitts.
+        - **Liquiditäts-Anker:** Abgesichert über Rolling Highs (`{r_high:,.1f}`) und Lows (`{r_low:,.1f}`).
         """)
 
 if auto_refresh:
