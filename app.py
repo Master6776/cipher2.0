@@ -88,9 +88,8 @@ with placeholder.container():
     is_long = "Long" in signal_type or tp1 > entry_price
     pos_text = "Long" if is_long else "Short"
 
-    # --- GESICHERTE DYNAMISCHE LEVERAGE BERECHNUNG (Mit Volatilitäts-Boden gegen Hebel-Explosion) ---
+    # --- GESICHERTE DYNAMISCHE LEVERAGE BERECHNUNG ---
     sl_distance_pct = abs(entry_price - stop_loss) / entry_price
-    # Sicherheitsboden: Mindestens 0.3% Abstand erzwingen, um Hebel-Spikes bei extrem kleinen ATRs zu deckeln
     effective_sl_dist = max(0.003, sl_distance_pct)
     
     if effective_sl_dist > 0:
@@ -98,7 +97,6 @@ with placeholder.container():
     else:
         dynamic_leverage = 1.0
 
-    # Harten Cap bei maximal 25x ansetzen (Schutz vor Krypto-Liquidationskaskaden & Gebühren-Drag)
     dynamic_leverage = min(25.0, max(1.0, dynamic_leverage))
 
     # Prozentuale Abstände für TP1/TP2
@@ -162,7 +160,7 @@ with placeholder.container():
 
     st.write("")
 
-    # --- Sektion 3: Reasoning & Details ---
+    # --- Sektion 3: Reasoning & Details (Nur 1x vorhanden) ---
     with st.expander("📊 Quant Reasoning & Sicherheits-Architektur", expanded=True):
         st.markdown(f"""
         - **Bar-Close-Fix aktiv:** Signal-Trigger basieren ausschließlich auf geschlossenen Kerzen (`iloc[-2]`), um nervöses Repainting im Live-Ticker auszuschließen.
