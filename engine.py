@@ -35,7 +35,6 @@ def get_blofin_ticker(symbol):
     return None
 
 def get_blofin_candles(symbol, timeframe="15m", limit=100):
-    # Mapping angepasst an Streamlit Auswahl ("15m", "1h", "4h", "1d")
     tf_mapping = {"15m": "15m", "1h": "1H", "4h": "4H", "1d": "1D"}
     bar = tf_mapping.get(timeframe, "1H")
     timestamp_param = int(time.time() * 1000)
@@ -58,15 +57,37 @@ def calculate_liquidity_and_sweep_logic(df, live_price=None):
 
     current_price = live_price if live_price is not None else df["close"].iloc[-1]
     
+    # 1. S/R Anker (Rolling High/Low)
     rolling_high = float(df["high"].iloc[-25:-2].max())
     rolling_low = float(df["low"].iloc[-25:-2].min())
     
+    # 2. ATR Volatilität
     high_low = df["high"] - df["low"]
     high_close = np.abs(df["high"] - df["close"].shift())
     low_close = np.abs(df["low"] - df["close"].shift())
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     atr = tr.rolling(window=14).mean().iloc[-1]
     
+    # 3. Oszillator-Komponenten (RSI & Money Flow Index) nachempfunden
+    # RSI Berechnung (14 Perioden)
+    delta = df["close"].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['rsi'] = 100 - (100 / (1 + rs))
+    current_rsi = float(df['rsi'].iloc[-1])
+
+    # Money Flow Index (MFI) Berechnung (14 Perioden) als Geldfluss-Wellen-Ersatz
+    typical_price = (df["high"] + df["low"] + df["close"]) / 3
+    raw_money_flow = typical_price * df["volume"]
+    tp_diff = typical_price.diff()
+    pos_flow = raw_money_flow.where(tp_diff > 0, 0).rolling(window=14).sum()
+    neg_flow = raw_money_flow.where(tp_diff < 0, 0).rolling(window=14).sum()
+    mfi_ratio = pos_flow / neg_flow
+    df['mfi'] = 100 - (100 / (1 + mfi_ratio))
+    current_mfi = float(df['mfi'].iloc[-1])
+    
+    # Volumen-Spike Check
     vol_sma = df["volume"].rolling(window=20).mean().iloc[-1]
     current_vol = df["volume"].iloc[-1]
     vol_spike = current_vol > (1.5 * vol_sma)
@@ -91,40 +112,43 @@ def calculate_liquidity_and_sweep_logic(df, live_price=None):
         tp2 = current_price + (3.5 * atr)
         confidence = 88
     else:
-        # Trend-Bestimmung
+        # Trend-Bestimmung mit Oszillator-Filter
         price_diff = current_price - df["close"].iloc[-6]
         is_up = price_diff >= 0
         signal_type = "Long Setup" if is_up else "Short Setup"
         
         if is_up:
-            # LONG: Stop-Loss sicher unter dem Support (rolling_low)
             stop_loss = rolling_low - (0.3 * atr)
             if stop_loss >= current_price:
                 stop_loss = current_price - (1.0 * atr)
                 
             risk_distance = current_price - stop_loss
-            
-            # S/R-Anker mit dynamischem CRV-Schutz (mind. 1:1.2 Verhältnis zum Risiko)
             min_tp1_distance = risk_distance * 1.2
             natural_tp1 = rolling_high if rolling_high > current_price else current_price + min_tp1_distance
             
             tp1 = max(natural_tp1, current_price + min_tp1_distance)
             tp2 = tp1 + (risk_distance * 1.5)
         else:
-            # SHORT: Stop-Loss sicher über dem Widerstand (rolling_high)
             stop_loss = rolling_high + (0.3 * atr)
             if stop_loss <= current_price:
                 stop_loss = current_price + (1.0 * atr)
                 
             risk_distance = stop_loss - current_price
-            
             min_tp1_distance = risk_distance * 1.2
             natural_tp1 = rolling_low if rolling_low < current_price else current_price - min_tp1_distance
             
             tp1 = min(natural_tp1, current_price - min_tp1_distance)
             tp2 = tp1 - (risk_distance * 1.5)
         
-        # Dynamische Konfidenz zwischen 30% und 78%
-        confidence = int(min(78, max(30, 50 + abs(price_diff / atr) * 8)))
+        # Oszillator-basierte Konfidenz-Modulation (RSI & MFI fließen ein)
+        base_conf = 50 + abs(price_diff / atr) * 6
+        
+        # Bonus/Malus durch RSI und MFI Zustand
+        if is_up and current_mfi > 50 and current_rsi < 70:
+            base_conf += 12  # Starker Geldfluss nach oben, gesunder RSI
+        elif not is_up and current_mfi < 50 and current_rsi > 30:
+            base_conf += 12  # Starker Geldfluss nach unten, gesunder RSI
+            
+        confidence = int(min(85, max(30, base_conf)))
 
     return float(current_price), float(stop_loss), float(tp1), float(tp2), int(confidence), signal_type, rolling_high, rolling_low
