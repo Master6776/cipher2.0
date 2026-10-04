@@ -35,7 +35,17 @@ def get_blofin_ticker(symbol):
     return None
 
 def get_blofin_candles(symbol, timeframe="15m", limit=100):
-    tf_mapping = {"15m": "15m", "1h": "1H", "4h": "4H", "1d": "1D"}
+    # Erweiterte Zeiteinheiten (inkl. 6h, 24h, 24m)
+    tf_mapping = {
+        "15m": "15m", 
+        "30m": "30m",
+        "1h": "1H", 
+        "4h": "4H", 
+        "6h": "6H", 
+        "24h": "1D", 
+        "24m": "1D", 
+        "1d": "1D"
+    }
     bar = tf_mapping.get(timeframe, "1H")
     timestamp_param = int(time.time() * 1000)
     url = f"https://openapi.blofin.com/api/v1/market/candles?instId={symbol}-USDT&bar={bar}&limit={limit}&_t={timestamp_param}"
