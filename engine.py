@@ -102,20 +102,27 @@ def calculate_liquidity_and_sweep_logic(df, live_price=None):
             if stop_loss >= current_price:
                 stop_loss = current_price - (1.0 * atr)
                 
-            # Take-Profits müssen bei Long IMMER über dem Entry liegen
-            base_tp1 = rolling_high if rolling_high > current_price else current_price + (1.5 * atr)
-            tp1 = base_tp1
-            tp2 = tp1 + (1.5 * atr)
+            risk_distance = current_price - stop_loss
+            
+            # S/R-Anker mit dynamischem CRV-Schutz (mind. 1:1.2 Verhältnis zum Risiko)
+            min_tp1_distance = risk_distance * 1.2
+            natural_tp1 = rolling_high if rolling_high > current_price else current_price + min_tp1_distance
+            
+            tp1 = max(natural_tp1, current_price + min_tp1_distance)
+            tp2 = tp1 + (risk_distance * 1.5)
         else:
             # SHORT: Stop-Loss sicher über dem Widerstand (rolling_high)
             stop_loss = rolling_high + (0.3 * atr)
             if stop_loss <= current_price:
                 stop_loss = current_price + (1.0 * atr)
                 
-            # Take-Profits müssen bei Short IMMER unter dem Entry liegen
-            base_tp1 = rolling_low if rolling_low < current_price else current_price - (1.5 * atr)
-            tp1 = base_tp1
-            tp2 = tp1 - (1.5 * atr)
+            risk_distance = stop_loss - current_price
+            
+            min_tp1_distance = risk_distance * 1.2
+            natural_tp1 = rolling_low if rolling_low < current_price else current_price - min_tp1_distance
+            
+            tp1 = min(natural_tp1, current_price - min_tp1_distance)
+            tp2 = tp1 - (risk_distance * 1.5)
         
         # Dynamische Konfidenz zwischen 30% und 78%
         confidence = int(min(78, max(30, 50 + abs(price_diff / atr) * 8)))
