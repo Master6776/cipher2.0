@@ -2,8 +2,6 @@ import requests
 import pandas as pd
 import numpy as np
 import time
-import os
-import streamlit as st
 
 def send_telegram_alert(message):
     bot_token = "8572342754:AAFLDHnyb96GTD0kI99pJ8X7UBRBz-rstlc"
