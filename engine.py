@@ -97,15 +97,25 @@ def calculate_liquidity_and_sweep_logic(df, live_price=None):
         signal_type = "Long Setup" if is_up else "Short Setup"
         
         if is_up:
-            # LONG: SL unter echten Support (rolling_low), TP1 beim letzten Widerstand (rolling_high)
+            # LONG: Stop-Loss sicher unter dem Support (rolling_low)
             stop_loss = rolling_low - (0.3 * atr)
-            tp1 = rolling_high
-            tp2 = rolling_high + (1.5 * atr)
+            if stop_loss >= current_price:
+                stop_loss = current_price - (1.0 * atr)
+                
+            # Take-Profits müssen bei Long IMMER über dem Entry liegen
+            base_tp1 = rolling_high if rolling_high > current_price else current_price + (1.5 * atr)
+            tp1 = base_tp1
+            tp2 = tp1 + (1.5 * atr)
         else:
-            # SHORT: SL über echten Widerstand (rolling_high), TP1 beim letzten Support (rolling_low)
+            # SHORT: Stop-Loss sicher über dem Widerstand (rolling_high)
             stop_loss = rolling_high + (0.3 * atr)
-            tp1 = rolling_low
-            tp2 = rolling_low - (1.5 * atr)
+            if stop_loss <= current_price:
+                stop_loss = current_price + (1.0 * atr)
+                
+            # Take-Profits müssen bei Short IMMER unter dem Entry liegen
+            base_tp1 = rolling_low if rolling_low < current_price else current_price - (1.5 * atr)
+            tp1 = base_tp1
+            tp2 = tp1 - (1.5 * atr)
         
         # Dynamische Konfidenz zwischen 30% und 78%
         confidence = int(min(78, max(30, 50 + abs(price_diff / atr) * 8)))
