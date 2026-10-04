@@ -35,7 +35,7 @@ if "signal_counter" not in st.session_state:
 if "last_sent_signal" not in st.session_state:
     st.session_state.last_sent_signal = None
 
-# --- SEITENLEISTE (Vollständig bereinigt ohne Risiko & Portfolio) ---
+# --- SEITENLEISTE ---
 st.sidebar.title("⚡ MyCipher Quant")
 asset = st.sidebar.selectbox("ASSET", ["BTC", "ETH", "SOL", "XRP"])
 exchange = st.sidebar.selectbox("EXCHANGE", ["Blofin"])
@@ -129,7 +129,8 @@ with placeholder.container():
     with st.expander("📊 Quant Reasoning & Technische Details anzeigen", expanded=True):
         st.markdown(f"""
         - **Handelsstil:** Algorithmisches Swing-Trading & Trendfolge auf Basis von Liquiditäts-Ankern.
-        - **Cipher B Logik:** Gewichtung von Oszillatoren-Crosses ($\pm 53$ Level) zusammen mit Trend-EMAs (20/50).
+        - **Volumen-Filter aktiv:** Signale erfordern nun ein Volumen von $> 2.0 \times$ des gleitenden Durchschnitts, um Rauschen zu filtern.
+        - **Dynamisches CRV:** TP1 optimiert auf 1.5 R, TP2 flexibel an Struktur-Ankern ausgerichtet.
         - **Liquiditäts-Anker:** Abgesichert über Rolling Highs (`{r_high:,.1f}`) und Lows (`{r_low:,.1f}`).
         """)
 

@@ -100,12 +100,16 @@ def calculate_liquidity_and_sweep_logic(df, live_price=None):
     signal_type = "Neutral"
     confidence = 50
     
-    if wt_cross_down:
+    vol_sma = df["volume"].rolling(window=20).mean().iloc[-1]
+    current_vol = df["volume"].iloc[-1]
+    vol_spike = current_vol > (2.0 * vol_sma)
+    
+    if wt_cross_down and vol_spike:
         signal_type = "Cipher B Short Overbought"
-        confidence = 80
-    elif wt_cross_up:
+        confidence = 85
+    elif wt_cross_up and vol_spike:
         signal_type = "Cipher B Long Oversold"
-        confidence = 80
+        confidence = 85
     elif short_ema:
         signal_type = "EMA Trend Short"
         confidence = 72
@@ -113,22 +117,18 @@ def calculate_liquidity_and_sweep_logic(df, live_price=None):
         signal_type = "EMA Trend Long"
         confidence = 76
     else:
-        vol_sma = df["volume"].rolling(window=20).mean().iloc[-1]
-        current_vol = df["volume"].iloc[-1]
-        vol_spike = current_vol > (1.5 * vol_sma)
-        
         if (df["high"].iloc[-1] > rolling_high) and (current_price < rolling_high) and vol_spike:
             signal_type = "Short (Liquidity Sweep)"
-            confidence = 70
+            confidence = 75
         elif (df["low"].iloc[-1] < rolling_low) and (current_price > rolling_low) and vol_spike:
             signal_type = "Long (Liquidity Sweep)"
-            confidence = 70
+            confidence = 75
         else:
             is_up = (current_price - df["close"].iloc[-6]) >= 0
             signal_type = "Long Setup" if is_up else "Short Setup"
-            confidence = 58
+            confidence = 55
 
-    # 4. SL & TP Berechnung
+    # 4. SL & Dynamische TP Berechnung
     is_short_signal = "Short" in signal_type
     
     if is_short_signal:
@@ -136,15 +136,15 @@ def calculate_liquidity_and_sweep_logic(df, live_price=None):
         if stop_loss <= current_price:
             stop_loss = current_price + (1.0 * atr)
         risk_distance = stop_loss - current_price
-        tp1 = current_price - (risk_distance * 1.2)
-        tp2 = current_price - (risk_distance * 2.0)
+        tp1 = current_price - (risk_distance * 1.5)
+        tp2 = max(current_price - (risk_distance * 2.5), rolling_low)
     else:
         stop_loss = rolling_low - (0.3 * atr)
         if stop_loss >= current_price:
             stop_loss = current_price - (1.0 * atr)
         risk_distance = current_price - stop_loss
-        tp1 = current_price + (risk_distance * 1.2)
-        tp2 = current_price + (risk_distance * 2.0)
+        tp1 = current_price + (risk_distance * 1.5)
+        tp2 = min(current_price + (risk_distance * 2.5), rolling_high)
 
     return (
         float(current_price), float(stop_loss), float(tp1), float(tp2), 
