@@ -36,6 +36,14 @@ st.markdown("""
         border: 1px solid #30363d; 
         height: 100%;
     }
+    .macro-regime-box {
+        background: linear-gradient(135deg, #161b22 0%, #0d1117 100%);
+        padding: 16px 20px;
+        border-radius: 10px;
+        border: 1px solid #30363d;
+        margin-bottom: 20px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+    }
     .history-pill { 
         background: #0d1117; 
         border: 1px solid #30363d; 
@@ -68,7 +76,7 @@ if "signal_counter" not in st.session_state:
 if "last_sent_signal" not in st.session_state:
     st.session_state.last_sent_signal = None
 
-# --- HILFSFUNKTION FÜR KERZEN-COUNTDOWN (INKL. 12m & 24m) ---
+# --- HILFSFUNKTION FÜR KERZEN-COUNTDOWN ---
 def get_candle_countdown(tf_str):
     now = datetime.now()
     minutes_map = {
@@ -97,8 +105,6 @@ st.sidebar.caption("AI-Driven Signals. Autonomous Management.")
 asset = st.sidebar.selectbox("ASSET", ["BTC", "ETH", "SOL", "XRP"])
 exchange = st.sidebar.selectbox("EXCHANGE", ["Blofin", "BloFin"])
 margin_mode = st.sidebar.selectbox("MARGIN MODE", ["Isolated", "Cross"])
-
-# Hier sind nun 12m und 24m fest im Dropdown verankert!
 selected_tf_mode = st.sidebar.selectbox("TIMEFRAME", ["6m", "12m", "15m", "24m", "30m", "1h", "4h", "6h", "12h", "1d"])
 
 min_probability = st.sidebar.slider("MIN PROBABILITY", min_value=50, max_value=85, value=70, step=5)
@@ -137,7 +143,29 @@ placeholder = st.empty()
 with placeholder.container():
     live_price = get_blofin_ticker(asset)
     
-    # --- MULTI-TIMEFRAME LOGIK ODER EINZEL-TF LOGIK ---
+    # --- MACRO REGIME ERKENNUNG (DAILY & 12h TREND) ---
+    df_macro = get_blofin_candles(asset, "1d")
+    macro_trend = "Neutral / Seitwärts"
+    macro_color = "#8b949e"
+    macro_badge = "⚖️ RANGE MARKT"
+    
+    if df_macro is not None and len(df_macro) > 20:
+        # Gleitender Durchschnitt (SMA 20 auf Daily Basis als Trendfilter)
+        df_macro['SMA20'] = df_macro['close'].rolling(window=20).mean()
+        last_close = df_macro['close'].iloc[-1]
+        last_sma = df_macro['SMA20'].iloc[-1]
+        
+        if last_close > last_sma:
+            macro_trend = "BULLRUN (Struktureller Aufwärtstrend)"
+            macro_color = "#3fb950"
+            macro_badge = "🚀 MACRO BULLRUN"
+        else:
+            macro_trend = "BÄRRUN (Distribution / Abwärtstrend)"
+            macro_color = "#f85149"
+            macro_badge = "🐻 MACRO BÄRRUN"
+
+    # --- MULTI-TIMEFRAME LOGIK MIT GEWINN- & TREND-FILTERUNG ---
+    master_signal_text = ""
     if multi_tf_enabled:
         scan_timeframes = ["12m", "15m", "24m", "30m", "1h", "4h", "6h", "24h"]
         mtf_results = []
@@ -148,21 +176,40 @@ with placeholder.container():
             if ep is not None:
                 is_l = "Long" in stype or t1 > ep
                 pos = "Long" if is_l else "Short"
+                
+                # Trend-Alignment Check mit dem Macro-Regime
+                alignment = "✅ Trend-Konform"
+                if "BULLRUN" in macro_trend and pos == "Short":
+                    alignment = "⚠️ Gegen-Trend (Korrektur)"
+                elif "BÄRRUN" in macro_trend and pos == "Long":
+                    alignment = "⚠️ Gegen-Trend (Korrektur)"
+                
                 mtf_results.append({
                     "Timeframe": tf,
                     "Richtung": pos,
+                    "Konfidenz_Val": conf,
                     "Konfidenz": f"{conf}%",
                     "Signal-Typ": stype,
+                    "Macro-Alignment": alignment,
                     "Entry": f"{ep:,.1f}"
                 })
             else:
                 mtf_results.append({
                     "Timeframe": tf,
                     "Richtung": "Keine Daten",
+                    "Konfidenz_Val": 0,
                     "Konfidenz": "0%",
                     "Signal-Typ": "N/A",
+                    "Macro-Alignment": "-",
                     "Entry": "-"
                 })
+        
+        # Sortiere nach höchster Konfidenz
+        mtf_results = sorted(mtf_results, key=lambda x: x["Konfidenz_Val"], reverse=True)
+        
+        if mtf_results and mtf_results[0]["Konfidenz_Val"] >= min_probability:
+            top_res = mtf_results[0]
+            master_signal_text = f"🎯 **Top Swing-Setup:** {top_res['Richtung']} auf **{top_res['Timeframe']}** ({top_res['Konfidenz']} Konfidenz) | Status: {top_res['Macro-Alignment']}"
         
         df_candles = get_blofin_candles(asset, selected_tf_mode)
         entry_price, stop_loss, tp1, tp2, confidence, signal_type, r_high, r_low = calculate_liquidity_and_sweep_logic(df_candles, live_price)
@@ -175,20 +222,18 @@ with placeholder.container():
 
     countdown_str, next_time_str = get_candle_countdown(selected_tf_mode)
 
-    # --- FILTER-LOGIK: IST DIE KONFIDENZ ZU NIEDRIG? ---
+    # --- FILTER-LOGIK ---
     if confidence < min_probability:
         raw_position_text = "Warten..."
         pos_color = "#8b949e"
         dot_icon = "⏳"
-        bot_status_text = f"Bot stumm (wartet auf >= {min_probability}%)"
     else:
         raw_is_long = "Long" in signal_type or tp1 > entry_price
         raw_position_text = "Long" if raw_is_long else "Short"
         pos_color = "#3fb950" if raw_is_long else "#f85149"
         dot_icon = "🟢" if raw_is_long else "🔴"
-        bot_status_text = f"Bot aktiv (Sendet Push bei >= {min_probability}%)"
 
-    # --- SIGNAL-STABILISIERUNG (ANTI-FLICKER LOGIK) ---
+    # --- SIGNAL-STABILISIERUNG ---
     if raw_position_text != st.session_state.stable_signal_type:
         st.session_state.signal_counter += 1
         if st.session_state.signal_counter >= 2 or raw_position_text == "Warten...":
@@ -200,13 +245,14 @@ with placeholder.container():
     position_text = st.session_state.stable_signal_type
     is_active_signal = position_text in ["Long", "Short"]
 
-    # --- AUTOMATISCHER TELEGRAM-VERSAND ---
+    # --- TELEGRAM VERSAND ---
     if enable_telegram and is_active_signal and confidence >= min_probability:
         signal_key = f"{asset}_{selected_tf_mode}_{position_text}_{entry_price:.1f}"
         if st.session_state.last_sent_signal != signal_key:
             alert_msg = (
-                f"🚨 *MYCIPHER TRADE SIGNAL* 🚨\n\n"
+                f"🚨 *MYCIPHER SWING SIGNAL* 🚨\n\n"
                 f"• **Asset:** {asset}USDT ({exchange.upper()})\n"
+                f"• **Macro-Regime:** {macro_trend}\n"
                 f"• **Timeframe:** {selected_tf_mode}\n"
                 f"• **Richtung:** {position_text}\n"
                 f"• **Konfidenz:** {confidence}%\n"
@@ -229,7 +275,7 @@ with placeholder.container():
 
     current_time_str = pd.Timestamp.now().strftime('%H:%M:%S')
 
-    # --- HISTORIE AKTUALISIEREN ---
+    # --- HISTORIE ---
     history_string = f"{dot_icon} {asset} {selected_tf_mode} [{current_time_str}]"
     if not st.session_state.signal_history or st.session_state.signal_history[-1].split("]")[0] != history_string.split("]")[0]:
         st.session_state.signal_history.append(history_string)
@@ -247,19 +293,40 @@ with placeholder.container():
 
     st.write("")
 
-    # --- TITEL ---
+    # --- TITEL & MAKRO-REGIME DASHBOARD ---
     st.markdown(f"<h2 style='margin:0; font-weight:800; letter-spacing:-0.5px;'>{asset}USDT <span style='font-size:15px; color:#8b949e; font-weight:400;'>@ {exchange.upper()} (SWING)</span></h2>", unsafe_allow_html=True)
-
     st.write("")
 
-    # --- MULTI-TIMEFRAME ÜBERSICHT (WENN AKTIVIERT) ---
+    # Professionelles Macro-Regime UI Panel
+    st.markdown(f"""
+    <div class="macro-regime-box">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <span style="color: #8b949e; font-size: 11px; font-weight: 600; letter-spacing: 1px; display: block; margin-bottom: 2px;">LANGFRISTIGER STRUKTUR-SCAN (DAILY / WEEKLY)</span>
+                <span style="color: {macro_color}; font-size: 16px; font-weight: 800;">{macro_trend}</span>
+            </div>
+            <div style="background: {macro_color}22; border: 1px solid {macro_color}; padding: 6px 14px; border-radius: 6px; color: {macro_color}; font-weight: bold; font-size: 12px;">
+                {macro_badge}
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # --- MULTI-TIMEFRAME MATRIX ---
     if multi_tf_enabled:
-        st.markdown("### 🌐 Multi-Timeframe Konfluenz-Matrix")
-        df_mtf = pd.DataFrame(mtf_results)
-        st.dataframe(df_mtf, use_container_width=True, hide_index=True)
+        if master_signal_text:
+            st.markdown(f"""
+            <div style="background: #0d1117; padding: 12px 18px; border-radius: 8px; border: 1px solid #30363d; margin-bottom: 16px; font-size: 13px; color: #f0f6fc;">
+                {master_signal_text}
+            </div>
+            """, unsafe_allow_html=True)
+            
+        st.markdown("### 🌐 Multi-Timeframe Konfluenz-Matrix (Mit Makro-Trend-Abgleich)")
+        df_mtf_display = pd.DataFrame(mtf_results)[["Timeframe", "Richtung", "Konfidenz", "Signal-Typ", "Macro-Alignment", "Entry"]]
+        st.dataframe(df_mtf_display, use_container_width=True, hide_index=True)
         st.write("")
 
-    # --- ZEILE 1 & 2 METRIKEN ---
+    # --- METRIKEN ---
     r1_cols = st.columns(4)
     r1_cols[0].metric("TIMEFRAME", selected_tf_mode)
     r1_cols[1].metric("POSITION", position_text)
@@ -273,19 +340,17 @@ with placeholder.container():
 
     st.write("")
 
-    # --- UNTERER BEREICH: REASONING & STATUS-METER ---
+    # --- UNTERER BEREICH: REASONING & STATUS ---
     col_left, col_right = st.columns([2.5, 1])
 
     with col_left:
         reasoning_text = (
-            f"<b>Telegram-Alarm:</b> Bot ist im Standby. Sendet erst ab <b>{min_probability}%</b> Konfidenz (aktuell: {confidence}%)."
+            f"<b>Telegram-Alarm:</b> Bot im Standby (wartet auf >= {min_probability}%)."
             if not is_active_signal else
-            f"<b>Telegram-Alarm:</b> Signal aktiv! Bot sendet Push bei Erfüllung der Kriterien."
+            f"<b>Telegram-Alarm:</b> Signal aktiv! Push-Benachrichtigung gesendet."
         )
         mc_score_text = (
-            f"<b>Nächster Check:</b> In ca. {countdown_str} (Kerzenschluss um {next_time_str})."
-            if not is_active_signal else
-            f"<b>MC Score:</b> +{confidence/10:.1f} ({position_text}, high conf, 8/10 agree)"
+            f"<b>Makro-Status:</b> Ausgerichtet auf {macro_trend}."
         )
 
         st.markdown(f"""
@@ -296,11 +361,11 @@ with placeholder.container():
             <div style="font-size: 12px; color: #8b949e; margin-bottom: 12px;">
                 {mc_score_text}
             </div>
-            <h4 style="margin-top: 0; font-size: 15px; color: #f0f6fc; letter-spacing: -0.3px;">Reasoning:</h4>
+            <h4 style="margin-top: 0; font-size: 15px; color: #f0f6fc; letter-spacing: -0.3px;">Reasoning & Macro-Auswertung:</h4>
             <ul style="color: #8b949e; font-size: 13px; margin-bottom: 0; line-height: 1.6;">
-                <li><b>Multi-TF-Scan:</b> {"Aktiv (Scannt 12m, 15m, 24m, 30m, 1h, 4h, 6h, 24h parallel)" if multi_tf_enabled else "Inaktiv (Standard Einzel-TF Modus)"}.</li>
-                <li><b>Marktphase:</b> Der {selected_tf_mode}-Orderflow zeigt aktuell {"starke Dominanz" if is_active_signal else "keine verwertbare Richtungsdominanz"}.</li>
-                <li><b>Empfehlung:</b> Automatischen Loop laufen lassen – der Bot meldet sich, sobald ein starkes Setup triggert.</li>
+                <li><b>Trend-Filter:</b> Das System bewertet den übergeordneten Kursverlauf auf Basis von Tagesstrukturen.</li>
+                <li><b>Swing-Management:</b> Setups, die mit dem Haupttrend laufen, erhalten die höchste Priorität für saubere Positionsaufstockungen.</li>
+                <li><b>Empfehlung:</b> Nutze die Matrix, um primär TFs zu traden, die ein <i>Trend-Konform</i>-Alignment aufweisen.</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
