@@ -91,16 +91,23 @@ def calculate_liquidity_and_sweep_logic(df, live_price=None):
         tp2 = current_price + (3.5 * atr)
         confidence = 88
     else:
-        # Dynamischere Werte basierend auf echtem Trend statt starrer 52%
+        # Trend-Bestimmung
         price_diff = current_price - df["close"].iloc[-6]
         is_up = price_diff >= 0
         signal_type = "Long Setup" if is_up else "Short Setup"
         
-        stop_loss = current_price - (atr * 1.2) if is_up else current_price + (atr * 1.2)
-        tp1 = current_price + (atr * 1.5) if is_up else current_price - (atr * 1.5)
-        tp2 = current_price + (atr * 3.0) if is_up else current_price - (atr * 3.0)
+        if is_up:
+            # LONG: SL unter echten Support (rolling_low), TP1 beim letzten Widerstand (rolling_high)
+            stop_loss = rolling_low - (0.3 * atr)
+            tp1 = rolling_high
+            tp2 = rolling_high + (1.5 * atr)
+        else:
+            # SHORT: SL über echten Widerstand (rolling_high), TP1 beim letzten Support (rolling_low)
+            stop_loss = rolling_high + (0.3 * atr)
+            tp1 = rolling_low
+            tp2 = rolling_low - (1.5 * atr)
         
-        # Variiert je nach Stärke der Kerzenschwankung zwischen 52% und 78%
+        # Dynamische Konfidenz zwischen 30% und 78%
         confidence = int(min(78, max(30, 50 + abs(price_diff / atr) * 8)))
 
     return float(current_price), float(stop_loss), float(tp1), float(tp2), int(confidence), signal_type, rolling_high, rolling_low
