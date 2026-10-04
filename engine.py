@@ -52,7 +52,7 @@ def get_blofin_candles(symbol, timeframe="15m", limit=100):
     return None
 
 def calculate_liquidity_and_sweep_logic(df, live_price=None):
-    if df is None or len(df) < 30:
+    if df is None or len(df) < 40:
         return None, None, None, None, 50, "Warten...", 0.0, 0.0
 
     current_price = live_price if live_price is not None else df["close"].iloc[-1]
@@ -68,26 +68,31 @@ def calculate_liquidity_and_sweep_logic(df, live_price=None):
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     atr = tr.rolling(window=14).mean().iloc[-1]
     
-    # 3. Oszillator-Komponenten (RSI & Money Flow Index) nachempfunden
-    # RSI Berechnung (14 Perioden)
+    # 3. RSI & Money Flow Index (MFI) Berechnung
     delta = df["close"].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['rsi'] = 100 - (100 / (1 + rs))
-    current_rsi = float(df['rsi'].iloc[-1])
-
-    # Money Flow Index (MFI) Berechnung (14 Perioden) als Geldfluss-Wellen-Ersatz
+    
     typical_price = (df["high"] + df["low"] + df["close"]) / 3
     raw_money_flow = typical_price * df["volume"]
     tp_diff = typical_price.diff()
     pos_flow = raw_money_flow.where(tp_diff > 0, 0).rolling(window=14).sum()
     neg_flow = raw_money_flow.where(tp_diff < 0, 0).rolling(window=14).sum()
-    mfi_ratio = pos_flow / neg_flow
-    df['mfi'] = 100 - (100 / (1 + mfi_ratio))
-    current_mfi = float(df['mfi'].iloc[-1])
+    df['mfi'] = 100 - (100 / (1 + (pos_flow / neg_flow)))
     
-    # Volumen-Spike Check
+    # 4. Divergenz-Erkennung
+    older_low_idx = df["low"].iloc[-35:-16].idxmin()
+    price_lower_low = df["low"].iloc[-1] < df["low"].loc[older_low_idx]
+    rsi_higher_low = df["rsi"].iloc[-1] > df["rsi"].loc[older_low_idx]
+    bullish_divergence = price_lower_low and rsi_higher_low
+
+    older_high_idx = df["high"].iloc[-35:-16].idxmax()
+    price_higher_high = df["high"].iloc[-1] > df["high"].loc[older_high_idx]
+    rsi_lower_high = df["rsi"].iloc[-1] < df["rsi"].loc[older_high_idx]
+    bearish_divergence = price_higher_high and rsi_lower_high
+
     vol_sma = df["volume"].rolling(window=20).mean().iloc[-1]
     current_vol = df["volume"].iloc[-1]
     vol_spike = current_vol > (1.5 * vol_sma)
@@ -99,20 +104,37 @@ def calculate_liquidity_and_sweep_logic(df, live_price=None):
     bullish_sweep = (last_low < rolling_low) and (last_close > rolling_low) and vol_spike
     bearish_sweep = (last_high > rolling_high) and (last_close < rolling_high) and vol_spike
     
-    if bearish_sweep:
-        signal_type = "Short (Liquidity Sweep & Rejection)"
-        stop_loss = last_high + (0.5 * atr)
-        tp1 = current_price - (2.0 * atr)
-        tp2 = current_price - (3.5 * atr)
-        confidence = 88
-    elif bullish_sweep:
-        signal_type = "Long (Liquidity Sweep & Rejection)"
-        stop_loss = last_low - (0.5 * atr)
-        tp1 = current_price + (2.0 * atr)
-        tp2 = current_price + (3.5 * atr)
-        confidence = 88
+    # Signal-Priorisierung mit Divergenzen & S/R-Ankern
+    if bearish_sweep or bearish_divergence:
+        signal_type = "Short (Bearish Divergence / Sweep)" if bearish_divergence else "Short (Liquidity Sweep)"
+        stop_loss = rolling_high + (0.3 * atr)
+        if stop_loss <= current_price:
+            stop_loss = current_price + (1.0 * atr)
+            
+        risk_distance = stop_loss - current_price
+        min_tp1_distance = risk_distance * 1.2
+        natural_tp1 = rolling_low if rolling_low < current_price else current_price - min_tp1_distance
+        
+        tp1 = min(natural_tp1, current_price - min_tp1_distance)
+        tp2 = tp1 - (risk_distance * 1.5)
+        confidence = 85 if bearish_divergence else 78
+        
+    elif bullish_sweep or bullish_divergence:
+        signal_type = "Long (Bullish Divergence / Sweep)" if bullish_divergence else "Long (Liquidity Sweep)"
+        stop_loss = rolling_low - (0.3 * atr)
+        if stop_loss >= current_price:
+            stop_loss = current_price - (1.0 * atr)
+            
+        risk_distance = current_price - stop_loss
+        min_tp1_distance = risk_distance * 1.2
+        natural_tp1 = rolling_high if rolling_high > current_price else current_price + min_tp1_distance
+        
+        tp1 = max(natural_tp1, current_price + min_tp1_distance)
+        tp2 = tp1 + (risk_distance * 1.5)
+        confidence = 85 if bullish_divergence else 78
+        
     else:
-        # Trend-Bestimmung mit Oszillator-Filter
+        # Standard S/R Trend-Setup mit CRV Schutz
         price_diff = current_price - df["close"].iloc[-6]
         is_up = price_diff >= 0
         signal_type = "Long Setup" if is_up else "Short Setup"
@@ -140,15 +162,14 @@ def calculate_liquidity_and_sweep_logic(df, live_price=None):
             tp1 = min(natural_tp1, current_price - min_tp1_distance)
             tp2 = tp1 - (risk_distance * 1.5)
         
-        # Oszillator-basierte Konfidenz-Modulation (RSI & MFI fließen ein)
+        # Konfidenz basierend auf Trendstärke und MFI
+        current_mfi = float(df['mfi'].iloc[-1])
         base_conf = 50 + abs(price_diff / atr) * 6
-        
-        # Bonus/Malus durch RSI und MFI Zustand
-        if is_up and current_mfi > 50 and current_rsi < 70:
-            base_conf += 12  # Starker Geldfluss nach oben, gesunder RSI
-        elif not is_up and current_mfi < 50 and current_rsi > 30:
-            base_conf += 12  # Starker Geldfluss nach unten, gesunder RSI
+        if is_up and current_mfi > 50:
+            base_conf += 10
+        elif not is_up and current_mfi < 50:
+            base_conf += 10
             
-        confidence = int(min(85, max(30, base_conf)))
+        confidence = int(min(80, max(30, base_conf)))
 
     return float(current_price), float(stop_loss), float(tp1), float(tp2), int(confidence), signal_type, rolling_high, rolling_low
