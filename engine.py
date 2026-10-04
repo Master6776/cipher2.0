@@ -41,8 +41,6 @@ def get_blofin_candles(symbol, timeframe="15m", limit=100):
         "1h": "1H", 
         "4h": "4H", 
         "6h": "6H", 
-        "24h": "1D", 
-        "24m": "1D", 
         "1d": "1D"
     }
     bar = tf_mapping.get(timeframe, "1H")
@@ -77,7 +75,7 @@ def calculate_liquidity_and_sweep_logic(df, live_price=None):
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     atr = tr.rolling(window=14).mean().iloc[-1]
     
-    # 3. VuManChu Cipher A / WaveTrend & EMA Ribbon Logik
+    # 3. VuManChu Cipher A/B & Trend-Logik
     hlc3 = (df['high'] + df['low'] + df['close']) / 3
     chlen, avg_len, malen = 9, 13, 3
     esa = hlc3.ewm(span=chlen, adjust=False).mean()
@@ -87,90 +85,70 @@ def calculate_liquidity_and_sweep_logic(df, live_price=None):
     wt2 = wt1.rolling(window=malen).mean()
     
     close = df['close']
-    ema1 = close.ewm(span=5, adjust=False).mean()
-    ema2 = close.ewm(span=11, adjust=False).mean()
-    ema8 = close.ewm(span=34, adjust=False).mean()
+    ema20 = close.ewm(span=20, adjust=False).mean()
+    ema50 = close.ewm(span=50, adjust=False).mean()
     
     curr_wt1 = wt1.iloc[-1]
     curr_wt2 = wt2.iloc[-1]
     prev_wt1 = wt1.iloc[-2]
     prev_wt2 = wt2.iloc[-2]
     
-    # Cipher A Signal-Bedingungen
     wt_cross_down = (prev_wt1 >= prev_wt2) and (curr_wt1 < curr_wt2) and (curr_wt2 >= 53)
     wt_cross_up = (prev_wt1 <= prev_wt2) and (curr_wt1 > curr_wt2) and (curr_wt2 <= -53)
     
-    red_cross = (ema1.iloc[-2] >= ema2.iloc[-2]) and (ema1.iloc[-1] < ema2.iloc[-1])
-    red_diamond = wt_cross_down
-    blood_diamond = red_diamond and red_cross
-    
-    long_ema = (ema2.iloc[-2] <= ema8.iloc[-2]) and (ema2.iloc[-1] > ema8.iloc[-1])
-    short_ema = (ema8.iloc[-2] <= ema2.iloc[-2]) and (ema8.iloc[-1] > ema2.iloc[-1])
+    long_ema = (ema20.iloc[-2] <= ema50.iloc[-2]) and (ema20.iloc[-1] > ema50.iloc[-1])
+    short_ema = (ema50.iloc[-2] <= ema20.iloc[-2]) and (ema50.iloc[-1] > ema20.iloc[-1])
     
     signal_type = "Neutral"
     confidence = 50
     
-    # Priorisierung der Cipher A Muster & Sweeps
-    if blood_diamond:
-        signal_type = "Blood Diamond Short 🔴"
-        confidence = 85
-    elif red_diamond:
-        signal_type = "Red Diamond Short 🔻"
-        confidence = 78
+    if wt_cross_down:
+        signal_type = "Cipher B Short Overbought"
+        confidence = 80
+    elif wt_cross_up:
+        signal_type = "Cipher B Long Oversold"
+        confidence = 80
     elif short_ema:
-        signal_type = "EMA Short Cross 📉"
+        signal_type = "EMA Trend Short"
         confidence = 72
     elif long_ema:
-        signal_type = "EMA Long Cross 📈"
+        signal_type = "EMA Trend Long"
         confidence = 76
-    elif wt_cross_up:
-        signal_type = "WaveTrend Long 🟢"
-        confidence = 74
     else:
-        # Fallback auf Liquiditäts-Sweeps / Trend
         vol_sma = df["volume"].rolling(window=20).mean().iloc[-1]
         current_vol = df["volume"].iloc[-1]
         vol_spike = current_vol > (1.5 * vol_sma)
         
-        last_high = df["high"].iloc[-1]
-        last_low = df["low"].iloc[-1]
-        
-        if (last_high > rolling_high) and (current_price < rolling_high) and vol_spike:
+        if (df["high"].iloc[-1] > rolling_high) and (current_price < rolling_high) and vol_spike:
             signal_type = "Short (Liquidity Sweep)"
             confidence = 70
-        elif (last_low < rolling_low) and (current_price > rolling_low) and vol_spike:
+        elif (df["low"].iloc[-1] < rolling_low) and (current_price > rolling_low) and vol_spike:
             signal_type = "Long (Liquidity Sweep)"
             confidence = 70
         else:
-            price_diff = current_price - df["close"].iloc[-6]
-            is_up = price_diff >= 0
+            is_up = (current_price - df["close"].iloc[-6]) >= 0
             signal_type = "Long Setup" if is_up else "Short Setup"
             confidence = 58
 
-    # 4. SL & TP Berechnung mit dynamischem CRV-Schutz
-    is_short_signal = "Short" in signal_type or "Diamond" in signal_type and "Short" in signal_type
+    # 4. SL & TP Berechnung
+    is_short_signal = "Short" in signal_type
     
     if is_short_signal:
         stop_loss = rolling_high + (0.3 * atr)
         if stop_loss <= current_price:
             stop_loss = current_price + (1.0 * atr)
-            
         risk_distance = stop_loss - current_price
-        min_tp1_distance = risk_distance * 1.2
-        natural_tp1 = rolling_low if rolling_low < current_price else current_price - min_tp1_distance
-        
-        tp1 = min(natural_tp1, current_price - min_tp1_distance)
-        tp2 = tp1 - (risk_distance * 1.5)
+        tp1 = current_price - (risk_distance * 1.2)
+        tp2 = current_price - (risk_distance * 2.0)
     else:
         stop_loss = rolling_low - (0.3 * atr)
         if stop_loss >= current_price:
             stop_loss = current_price - (1.0 * atr)
-            
         risk_distance = current_price - stop_loss
-        min_tp1_distance = risk_distance * 1.2
-        natural_tp1 = rolling_high if rolling_high > current_price else current_price + min_tp1_distance
-        
-        tp1 = max(natural_tp1, current_price + min_tp1_distance)
-        tp2 = tp1 + (risk_distance * 1.5)
+        tp1 = current_price + (risk_distance * 1.2)
+        tp2 = current_price + (risk_distance * 2.0)
 
-    return float(current_price), float(stop_loss), float(tp1), float(tp2), int(confidence), signal_type, float(rolling_high), float(rolling_low)
+    return (
+        float(current_price), float(stop_loss), float(tp1), float(tp2), 
+        int(confidence), signal_type, float(rolling_high), float(rolling_low)
+    )
